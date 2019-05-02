@@ -477,11 +477,11 @@ def replace_tuple_intrinsics_with_intrinsic(comp):
       arg_type = [element.type_signature.parameter for element in comps]
       arg = computation_building_blocks.Reference('arg', arg_type)
       elements = []
-      for index, name in enumerate(call_names):
+      for index, _ in enumerate(comps):
         sel_fn = computation_building_blocks.Selection(fn, index=index)
         sel_arg = computation_building_blocks.Selection(arg, index=index)
         call = computation_building_blocks.Call(sel_fn, sel_arg)
-        elements.append((name, call))
+        elements.append(call)
       calls = computation_building_blocks.Tuple(elements)
       lam = computation_building_blocks.Lambda(arg.name, arg.type_signature,
                                                calls)

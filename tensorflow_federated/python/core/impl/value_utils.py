@@ -23,11 +23,9 @@ from six.moves import range
 from tensorflow_federated.python.common_libs import anonymous_tuple
 from tensorflow_federated.python.common_libs import py_typecheck
 from tensorflow_federated.python.core.api import computation_types
-from tensorflow_federated.python.core.api import placements
 from tensorflow_federated.python.core.api import value_base
 from tensorflow_federated.python.core.impl import computation_building_blocks
-from tensorflow_federated.python.core.impl import intrinsic_defs
-from tensorflow_federated.python.core.impl import type_utils
+from tensorflow_federated.python.core.impl import computation_constructing_utils
 from tensorflow_federated.python.core.impl import value_impl
 
 
@@ -50,45 +48,19 @@ def zip_two_tuple(input_val, context_stack):
   py_typecheck.check_type(input_val[0].type_signature,
                           computation_types.FederatedType)
 
-  zip_uris = {
-      placements.CLIENTS: intrinsic_defs.FEDERATED_ZIP_AT_CLIENTS.uri,
-      placements.SERVER: intrinsic_defs.FEDERATED_ZIP_AT_SERVER.uri,
-  }
-  zip_all_equal = {
-      placements.CLIENTS: False,
-      placements.SERVER: True,
-  }
-  output_placement = input_val[0].type_signature.placement
-  if output_placement not in zip_uris:
-    raise TypeError('The argument must have components placed at SERVER or '
-                    'CLIENTS')
-  output_all_equal_bit = zip_all_equal[output_placement]
-  for elem in input_val:
-    type_utils.check_federated_value_placement(elem, output_placement)
-  num_elements = len(anonymous_tuple.to_elements(input_val.type_signature))
-  if num_elements != 2:
-    raise ValueError('The argument of zip_two_tuple must be a 2-tuple, '
-                     'not an {}-tuple'.format(num_elements))
-  result_type = computation_types.FederatedType(
-      [(name, e.member)
-       for name, e in anonymous_tuple.to_elements(input_val.type_signature)],
-      output_placement, output_all_equal_bit)
+  unnamed_zip = computation_constructing_utils.construct_federated_zip_of_two_tuple(
+      value_impl.ValueImpl.get_comp(input_val))
 
-  def _adjust_all_equal_bit(x):
-    return computation_types.FederatedType(x.member, x.placement,
-                                           output_all_equal_bit)
+  names_to_add = [
+      name for name, _ in anonymous_tuple.to_elements(input_val.type_signature)
+  ]
+  tuple_type_to_name = unnamed_zip.type_signature.member
+  naming_function = computation_constructing_utils.construct_naming_function(
+      tuple_type_to_name, names_to_add)
+  named_zip = computation_constructing_utils.construct_map_or_apply(
+      naming_function, unnamed_zip)
 
-  adjusted_input_type = computation_types.NamedTupleType([
-      (k, _adjust_all_equal_bit(v)) if k else _adjust_all_equal_bit(v)
-      for k, v in anonymous_tuple.to_elements(input_val.type_signature)
-  ])
-
-  intrinsic = value_impl.ValueImpl(
-      computation_building_blocks.Intrinsic(
-          zip_uris[output_placement],
-          computation_types.FunctionType(adjusted_input_type, result_type)),
-      context_stack)
-  return intrinsic(input_val)
+  return value_impl.ValueImpl(named_zip, context_stack)
 
 
 def flatten_first_index(apply_fn, type_to_add, context_stack):

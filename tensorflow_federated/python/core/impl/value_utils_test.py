@@ -96,7 +96,8 @@ class ValueUtilsTest(parameterized.TestCase):
             computation_types.FederatedType(tf.int32, placements.CLIENTS, True),
             computation_types.FederatedType(tf.bool, placements.SERVER, True)
         ]))
-    with six.assertRaisesRegex(self, TypeError, 'should be placed at CLIENTS'):
+    with six.assertRaisesRegex(self, TypeError,
+                               'conflicts with placement CLIENTS'):
       _ = value_utils.zip_two_tuple(
           value_impl.to_value(server_test_ref, None, _context_stack),
           _context_stack)

@@ -353,3 +353,138 @@ def create_federated_map(fn, arg):
       intrinsic_defs.FEDERATED_MAP.uri, intrinsic_type)
   tup = computation_building_blocks.Tuple((fn, arg))
   return computation_building_blocks.Call(intrinsic, tup)
+
+
+def construct_federated_zip_of_two_tuple(comp):
+  """Zips a named tuple with two federated elements, dropping any names.
+
+  It is necessary to drop names due to the type signature of federated zip:
+
+                            <T@P,U@P>-><T,U>@P
+
+  Tuples with named elements are not allowed in this type signature. This
+  function, therefore, selects the 0th and 1st elements from its argument
+  `comp`, ensuring that the resulting tuple is unnamed. It is this tuple that
+  is zipped and returned.
+
+  Args:
+    comp: Instance of `computation_building_blocks.ComputationBuildingBlock`
+      with type `computation_types.NamedTupleType` and whose elements are of
+      type `computation_types.FederatedType`, all with the same placement.
+      `comp` represents the building block we wish to zip.
+
+  Returns:
+    A zipped version of comp; an instance of
+    `computation_building_blocks.ComputationBuildingBlock` of federated type,
+    with member a named two-tuple with `None` for both names.
+
+  Raises:
+    TypeError: If the types don't match those described above, there are
+    multiple distinct placements present in the argument tuple, or the
+    placement on the argument tuple is currently unsupported.
+    ValueError: If the argument tuple does not have two elements.
+  """
+  py_typecheck.check_type(comp,
+                          computation_building_blocks.ComputationBuildingBlock)
+  py_typecheck.check_type(comp.type_signature, computation_types.NamedTupleType)
+  zip_uris = {
+      placement_literals.CLIENTS: intrinsic_defs.FEDERATED_ZIP_AT_CLIENTS.uri,
+      placement_literals.SERVER: intrinsic_defs.FEDERATED_ZIP_AT_SERVER.uri,
+  }
+  zip_all_equal = {
+      placement_literals.CLIENTS: False,
+      placement_literals.SERVER: True,
+  }
+  output_placement = comp.type_signature[0].placement
+  if output_placement not in zip_uris:
+    raise TypeError('The argument must have components placed at SERVER or '
+                    'CLIENTS')
+  output_all_equal_bit = zip_all_equal[output_placement]
+  for _, elem in anonymous_tuple.to_elements(comp.type_signature):
+    py_typecheck.check_type(elem, computation_types.FederatedType)
+    if elem.placement != output_placement:
+      raise TypeError(
+          'The argument to `construct_unnamed_federated_zip` must be a tuple of '
+          'federated types, all of the same placement; you have passed in a '
+          'value of placement {}, which conflicts with placement {}.'.format(
+              elem.placement, output_placement))
+  num_elements = len(anonymous_tuple.to_elements(comp.type_signature))
+  if num_elements != 2:
+    raise ValueError('The argument of zip_two_tuple must be a 2-tuple, '
+                     'not an {}-tuple'.format(num_elements))
+  result_type = computation_types.FederatedType(
+      [e.member for _, e in anonymous_tuple.to_elements(comp.type_signature)],
+      output_placement, output_all_equal_bit)
+
+  def _adjust_all_equal_bit(x):
+    return computation_types.FederatedType(x.member, x.placement,
+                                           output_all_equal_bit)
+
+  adjusted_input_type = computation_types.NamedTupleType([
+      _adjust_all_equal_bit(v)
+      for _, v in anonymous_tuple.to_elements(comp.type_signature)
+  ])
+  selected_input = computation_building_blocks.Tuple([
+      computation_building_blocks.Selection(comp, index=0),
+      computation_building_blocks.Selection(comp, index=1)
+  ])
+  concretized_intrinsic = computation_building_blocks.Intrinsic(
+      zip_uris[output_placement],
+      computation_types.FunctionType(adjusted_input_type, result_type))
+  zipped = computation_building_blocks.Call(concretized_intrinsic,
+                                            selected_input)
+  return zipped
+
+
+def construct_naming_function(tuple_type_to_name, names_to_add):
+  """Constructs a function which names tuple elements via `names_to_add`.
+
+  Certain intrinsics, e.g. `federated_zip`, only accept unnamed tuples as
+  arguments, and can only produce unnamed tuples as their outputs. This is not
+  necessarily desirable behavior, as it necessitates dropping any names that
+  exist before the zip. This function is intended to provide a remedy for this
+  shortcoming, so that a tuple can be renamed after it is passed through the
+  `federated_zip` intrinsic.
+
+  Args:
+    tuple_type_to_name: Instance of `computation_types.NamedTupleType`, the type
+      to populate with names from `names_to_add`.
+    names_to_add: Python `tuple` or `list` containing instances of type `str` or
+      `None`, the names to give to `tuple_type_to_name`.
+
+  Returns:
+    An instance of `computation_building_blocks.Lambda` representing a function
+    which takes an argument of type `tuple_type_to_name` and returns the same
+    argument, but with the names from `names_to_add` attached to the type
+    signature.
+
+  Raises:
+    TypeError: If the types do not match the description above.
+    ValueError: If `tuple_type_to_name` and `names_to_add` are of different
+    lengths.
+  """
+  py_typecheck.check_type(tuple_type_to_name, computation_types.NamedTupleType)
+  py_typecheck.check_type(names_to_add, (list, tuple))
+  element_types_to_accept = six.string_types + (type(None),)
+  if not all(isinstance(x, element_types_to_accept) for x in names_to_add):
+    raise TypeError('`names_to_add` must contain only instances of `str` or '
+                    'NoneType; you have passed in {}'.format(names_to_add))
+
+  if len(names_to_add) != len(tuple_type_to_name):
+    raise ValueError(
+        'Number of elements in `names_to_add` must match number of element in '
+        'the named tuple type `tuple_type_to_name`; here, `names_to_add` has '
+        '{} elements and `tuple_type_to_name` has {}.'.format(
+            len(names_to_add), len(tuple_type_to_name)))
+  naming_lambda_arg = computation_building_blocks.Reference(
+      'x', tuple_type_to_name)
+
+  def _create_tuple_element(i):
+    return (names_to_add[i],
+            computation_building_blocks.Selection(naming_lambda_arg, index=i))
+
+  named_result = computation_building_blocks.Tuple(
+      [_create_tuple_element(k) for k in range(len(names_to_add))])
+  return computation_building_blocks.Lambda('x',
+                                            naming_lambda_arg.type_signature,
+                                            named_result)

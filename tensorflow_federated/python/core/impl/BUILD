@@ -122,11 +122,13 @@ py_test(
     deps = [
         ":computation_building_blocks",
         ":computation_constructing_utils",
+        ":computation_impl",
         ":context_stack_impl",
         ":intrinsic_defs",
         ":placement_literals",
         ":type_utils",
         ":value_impl",
+        "//tensorflow_federated/python/common_libs:anonymous_tuple",
         "//tensorflow_federated/python/core/api:computation_types",
         "//tensorflow_federated/python/core/api:placements",
     ],
@@ -769,6 +771,7 @@ py_library(
     srcs = ["value_utils.py"],
     deps = [
         ":computation_building_blocks",
+        ":computation_constructing_utils",
         ":intrinsic_defs",
         ":type_utils",
         ":value_impl",

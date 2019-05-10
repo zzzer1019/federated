@@ -25,6 +25,7 @@ import six
 from six.moves import range
 
 from tensorflow.python.framework import function
+from tensorflow.python.util import tf_inspect
 from tensorflow_federated.python.common_libs import anonymous_tuple
 from tensorflow_federated.python.common_libs import py_typecheck
 from tensorflow_federated.python.core.api import computation_base
@@ -61,7 +62,9 @@ def is_defun(fn):
           # upstreaming some helper library or extending the public interface.
           function._DefinedFunction,  # pylint: disable=protected-access
           function._OverloadedFunction  # pylint: disable=protected-access
-      ))
+      )) or (
+          # TODO(b/113112885): Add (cleaner) support for tf.Function and
+          'def_function.Function' in py_typecheck.type_string(type(fn)))
 
 
 def get_argspec(fn):
@@ -94,9 +97,7 @@ def get_argspec(fn):
     # inside to extract arguments.
     return inspect.getargspec(fn._func)  # pylint: disable=protected-access,deprecated-method
   elif is_defun(fn):
-    raise TypeError(
-        'Support for defuns of type {} has not been implemented yet.'.format(
-            py_typecheck.type_string(type(fn))))
+    return tf_inspect.getargspec(fn)
   else:
     raise TypeError('Expected a Python function or a defun, found {}.'.format(
         py_typecheck.type_string(type(fn))))

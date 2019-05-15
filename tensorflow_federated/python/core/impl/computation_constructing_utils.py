@@ -654,6 +654,60 @@ def create_federated_sum(value):
   return computation_building_blocks.Call(intrinsic, value)
 
 
+def create_federated_unzip(value):
+  r"""Creates a tuple of called federated maps or applies.
+
+                Block
+               /     \
+  [value=Comp]        Tuple
+                      |
+                      [Call,                        Call, ...]
+                      /    \                       /    \
+             Intrinsic      Tuple         Intrinsic      Tuple
+                            |                            |
+                [Lambda(arg), Ref(value)]    [Lambda(arg), Ref(value)]
+                            \                            \
+                             Sel(0)                       Sel(1)
+                                   \                            \
+                                    Ref(arg)                     Ref(arg)
+
+  This function returns a tuple of federated values given a `value` with a
+  federated tuple type signature.
+
+  Args:
+    value: A `computation_building_blocks.ComputationBuildingBlock` with a
+      `type_signature` of type `computation_types.NamedTupleType` containing at
+      least one element.
+
+  Returns:
+    A `computation_building_blocks.Call`.
+
+  Raises:
+    TypeError: If any of the types do not match.
+    ValueError: If `value` does not contain any elements.
+  """
+  py_typecheck.check_type(value,
+                          computation_building_blocks.ComputationBuildingBlock)
+  named_type_signatures = anonymous_tuple.to_elements(
+      value.type_signature.member)
+  length = len(named_type_signatures)
+  if length == 0:
+    raise ValueError('federated_zip is only supported on non-empty tuples.')
+  value_ref = computation_building_blocks.Reference('value',
+                                                    value.type_signature)
+  symbols = ((value_ref.name, value),)
+  elements = []
+  fn_ref = computation_building_blocks.Reference('arg', named_type_signatures)
+  for index, (name, _) in enumerate(named_type_signatures):
+    sel = computation_building_blocks.Selection(fn_ref, index=index)
+    fn = computation_building_blocks.Lambda(fn_ref.name, fn_ref.type_signature,
+                                            sel)
+    intrinsic = construct_map_or_apply(fn, value_ref)
+    elements.append((name, intrinsic))
+  result = computation_building_blocks.Tuple(elements)
+  return computation_building_blocks.Block(symbols, result)
+
+
 def create_federated_value(value, placement):
   r"""Creates a called federated value.
 
